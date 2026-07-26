@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>Yagana POS</title>
+  <style>
+    :root{
+      --bg:#0b1120;--panel:#111827;--panel2:#1f2937;--line:#374151;
+      --text:#f9fafb;--muted:#9ca3af;--accent:#f59e0b;--accent2:#fbbf24;
+      --ok:#22c55e;--bad:#ef4444
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:Arial,system-ui,sans-serif}
+    button,input,select{font:inherit}button{cursor:pointer}.hidden{display:none!important}
+    .login{min-height:100vh;display:grid;place-items:center;padding:18px}
+    .login-card,.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:17px}
+    .login-card{width:min(430px,100%)}
+    .brand{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+    .logo{width:50px;height:50px;border-radius:14px;background:var(--accent);display:grid;place-items:center;color:#111827;font-size:28px;font-weight:900}
+    h1,h2,h3{margin-top:0}.muted{color:var(--muted)}
+    label{display:grid;gap:6px;margin:11px 0}
+    input,select{width:100%;padding:11px;border:1px solid var(--line);border-radius:10px;background:#0f172a;color:white}
+    .primary,.secondary,.danger,.nav-btn{border:0;border-radius:10px;padding:11px 13px}
+    .primary{background:var(--accent);color:#111827;font-weight:800}
+    .secondary{background:#374151;color:white}.danger{background:var(--bad);color:white}
+    #app{min-height:100vh;display:grid;grid-template-columns:235px 1fr}
+    .sidebar{background:#0f172a;border-right:1px solid var(--line);padding:16px;display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
+    nav{display:grid;gap:7px}.nav-btn{text-align:left;background:transparent;color:white}.nav-btn:hover,.nav-btn.active{background:var(--panel2);color:var(--accent2)}
+    .side-bottom{margin-top:auto;display:grid;gap:10px}
+    .topbar{position:sticky;top:0;z-index:5;background:rgba(17,24,39,.96);border-bottom:1px solid var(--line);padding:13px 18px;display:flex;align-items:center;gap:12px}
+    .topbar h1{font-size:21px;margin:0}.topbar .right{margin-left:auto}
+    .content{padding:18px;max-width:1500px;margin:auto}
+    .grid{display:grid;gap:15px}.cols2{grid-template-columns:repeat(2,minmax(0,1fr))}.cols3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .toolbar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:15px}.toolbar label{margin:0;min-width:160px}.grow{flex:1}
+    .badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#374151;font-size:12px}.badge.ok{background:rgba(34,197,94,.18);color:#86efac}.badge.warn{background:rgba(245,158,11,.18);color:#fde68a}.badge.bad{background:rgba(239,68,68,.18);color:#fca5a5}
+    .pos{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,.75fr);gap:15px}
+    .products{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+    .product{background:var(--panel2);color:white;border:1px solid var(--line);border-radius:13px;padding:13px;text-align:left;display:grid;gap:7px}
+    .product:disabled{opacity:.45}.price{color:var(--accent2);font-weight:900}
+    .cart-line,.row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+    .qty{display:flex;align-items:center;gap:7px}.qty button{border:0;border-radius:7px;width:29px;height:29px;background:#374151;color:white}
+    .total{display:flex;justify-content:space-between;font-size:23px;font-weight:900;margin-top:14px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+    .ticket{background:var(--panel2);border-left:5px solid var(--accent);border-radius:12px;padding:14px;margin-bottom:12px}.ticket.ready{border-left-color:var(--ok)}
+    .ticket-head{display:flex;justify-content:space-between;gap:10px}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
+    table{width:100%;border-collapse:collapse;min-width:700px}th,td{padding:10px;text-align:left;border-bottom:1px solid var(--line)}th{background:#0f172a}
+    .empty{text-align:center;color:var(--muted);padding:28px;border:1px dashed var(--line);border-radius:12px}
+    .toast{position:fixed;right:16px;bottom:16px;background:#111827;border:1px solid var(--line);border-radius:11px;padding:12px 14px;z-index:100}
+    .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;padding:18px;z-index:90}
+    .modal{width:min(560px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+    @media(max-width:900px){.pos,.cols2,.cols3{grid-template-columns:1fr}}
+    @media(max-width:720px){
+      #app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.sidebar nav{grid-template-columns:repeat(2,1fr)}
+      .content{padding:11px}.topbar{position:static}.products{grid-template-columns:repeat(2,minmax(0,1fr))}
+    }
+  </style>
+</head>
+<body>
+<section id="loginScreen" class="login">
+  <div class="login-card">
+    <div class="brand">
+      <div class="logo">Y</div>
+      <div><h1 style="margin:0">Yagana POS</h1><div class="muted">Caja, Cocina y Barra conectadas</div></div>
+    </div>
+    <label>Correo<input id="loginEmail" type="email" autocomplete="username" placeholder="caja@yagana.com"></label>
+    <label>Contraseña<input id="loginPassword" type="password" autocomplete="current-password"></label>
+    <button id="loginBtn" class="primary" style="width:100%">Ingresar</button>
+    <p id="loginError" class="muted"></p>
+  </div>
+</section>
+
+<div id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="brand"><div class="logo">Y</div><div><strong>Yagana</strong><div class="muted">Sistema central</div></div></div>
+    <nav id="nav"></nav>
+    <div class="side-bottom"><span id="roleBadge" class="badge"></span><button id="logoutBtn" class="secondary">Cerrar sesión</button></div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <div><h1 id="pageTitle">Yagana POS</h1><div id="pageSub" class="muted"></div></div>
+      <div class="right"><span id="onlineBadge" class="badge ok">● En línea</span></div>
+    </header>
+    <div id="content" class="content"></div>
+  </main>
+</div>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
+import {
+  getFirestore, collection, addDoc, doc, updateDoc, onSnapshot,
+  writeBatch, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyB55fdEzyFVMbNC86GnIaymYsBX3Cb6fSw",
+  authDomain: "yagana-pos.firebaseapp.com",
+  projectId: "yagana-pos",
+  storageBucket: "yagana-pos.firebasestorage.app",
+  messagingSenderId: "342735543844",
+  appId: "1:342735543844:web:c14ec956710f178181c2b1"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const $ = s => document.querySelector(s);
+const money = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(Number(n||0));
+const esc = s => String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+
+const roleByEmail = email => ({
+  "admin@yagana.com":"admin",
+  "caja@yagana.com":"caja",
+  "cocina@yagana.com":"cocina",
+  "barra@yagana.com":"barra"
+})[(email||"").toLowerCase()] || "sin-permiso";
+
+let user=null, role="sin-permiso", products=[], orders=[], commands=[], sales=[];
+let cart=[], selectedTable="1", currentView="inicio", unsubs=[];
+
+function toast(msg){
+  const t=document.createElement("div");t.className="toast";t.textContent=msg;
+  $("#toastRoot").appendChild(t);setTimeout(()=>t.remove(),2600);
+}
+function modal(html){$("#modalRoot").innerHTML=`<div class="modal-bg"><div class="modal">${html}</div></div>`}
+function closeModal(){$("#modalRoot").innerHTML=""}
+window.closeModal=closeModal;
+
+function navForRole(){
+  const items=[];
+  if(["admin","caja"].includes(role))items.push(["inicio","📊 Inicio"],["caja","🛒 Caja"],["mesas","🪑 Mesas"],["productos","📦 Productos"],["ventas","🧾 Ventas"]);
+  if(["admin","cocina"].includes(role))items.push(["cocina","👨‍🍳 Cocina"]);
+  if(["admin","barra"].includes(role))items.push(["barra","🍺 Barra"]);
+  return items;
+}
+function renderNav(){
+  $("#nav").innerHTML=navForRole().map(([v,t])=>`<button class="nav-btn ${v===currentView?"active":""}" data-v="${v}">${t}</button>`).join("");
+  document.querySelectorAll(".nav-btn").forEach(b=>b.onclick=()=>setView(b.dataset.v));
+}
+function setView(v){currentView=v;renderNav();render()}
+window.setView=setView;
+
+function startListeners(){
+  unsubs.forEach(f=>f());unsubs=[];
+  unsubs.push(onSnapshot(collection(db,"products"),snap=>{products=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
+  unsubs.push(onSnapshot(collection(db,"commands"),snap=>{commands=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
+  if(["admin","caja"].includes(role)){
+    unsubs.push(onSnapshot(collection(db,"orders"),snap=>{orders=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
+    unsubs.push(onSnapshot(collection(db,"sales"),snap=>{sales=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
+  }
+}
+function render(){
+  if(!user)return;
+  const map={
+    inicio:renderHome,caja:renderCaja,mesas:renderTables,productos:renderProducts,
+    ventas:renderSales,cocina:()=>renderStation("Cocina"),barra:()=>renderStation("Barra")
+  };
+  (map[currentView]||renderHome)();
+}
+function title(a,b=""){$("#pageTitle").textContent=a;$("#pageSub").textContent=b}
+
+function renderHome(){
+  title("Inicio","Información compartida en tiempo real");
+  const active=commands.filter(c=>c.status!=="Entregado").length;
+  const open=orders.filter(o=>o.status==="Abierta").length;
+  const total=sales.reduce((a,s)=>a+Number(s.total||0),0);
+  $("#content").innerHTML=`
+  <div class="grid cols3">
+    <section class="card"><div class="muted">Comandas activas</div><h2>${active}</h2></section>
+    <section class="card"><div class="muted">Mesas abiertas</div><h2>${open}</h2></section>
+    <section class="card"><div class="muted">Ventas registradas</div><h2>${money(total)}</h2></section>
+  </div>
+  <section class="card" style="margin-top:15px">
+    <h2>Sistema central conectado</h2>
+    <p>Caja, Cocina y Barra están leyendo la misma base de datos.</p>
+    ${products.length===0&&["admin","caja"].includes(role)?`<button class="primary" onclick="seedProducts()">Crear productos iniciales</button>`:""}
+  </section>`;
+}
+
+function renderCaja(){
+  title("Caja","Crear pedidos y enviarlos a Cocina y Barra");
+  const cats=["Todas",...new Set(products.map(p=>p.category||"General"))];
+  $("#content").innerHTML=`
+  <div class="toolbar">
+    <label>Mesa<select id="tableSel">${Array.from({length:12},(_,i)=>`<option ${String(i+1)===selectedTable?"selected":""}>${i+1}</option>`).join("")}</select></label>
+    <label class="grow">Buscar<input id="searchProd" placeholder="Producto"></label>
+    <label>Categoría<select id="catSel">${cats.map(c=>`<option>${esc(c)}</option>`).join("")}</select></label>
+  </div>
+  <div class="pos">
+    <section class="card"><div id="productGrid" class="products"></div></section>
+    <section class="card">
+      <h2>Mesa ${selectedTable}</h2>
+      <div id="cart"></div>
+      <div class="total"><span>Total</span><span id="cartTotal"></span></div>
+      <div class="actions"><button class="primary" onclick="sendOrder()">Enviar pedido</button><button class="secondary" onclick="clearCart()">Vaciar</button></div>
+    </section>
+  </div>`;
+
+  $("#tableSel").onchange=e=>{selectedTable=e.target.value;renderCaja()};
+  const drawProducts=()=>{
+    const q=$("#searchProd").value.toLowerCase().trim(),cat=$("#catSel").value;
+    const list=products.filter(p=>p.active!==false&&(cat==="Todas"||p.category===cat)&&(!q||(p.name+" "+p.category).toLowerCase().includes(q)));
+    $("#productGrid").innerHTML=list.length?list.map(p=>`
+      <button class="product" onclick="addToCart('${p.id}')" ${Number(p.stock||0)<=0?"disabled":""}>
+        <strong>${esc(p.name)}</strong><span class="price">${money(p.price)}</span>
+        <span class="muted">${esc(p.destination)} · stock ${p.stock||0}</span>
+      </button>`).join(""):`<div class="empty">No hay productos.</div>`;
+  };
+  $("#searchProd").oninput=drawProducts;$("#catSel").onchange=drawProducts;
+  drawProducts();drawCart();
+}
+function drawCart(){
+  const root=$("#cart");if(!root)return;
+  root.innerHTML=cart.length?cart.map(i=>`
+    <div class="cart-line">
+      <div><strong>${esc(i.name)}</strong><div class="muted">${money(i.price)}</div></div>
+      <div class="qty"><button onclick="qty('${i.productId}',-1)">−</button><strong>${i.qty}</strong><button onclick="qty('${i.productId}',1)">+</button></div>
+    </div>`).join(""):`<div class="empty">Pedido vacío.</div>`;
+  $("#cartTotal").textContent=money(cart.reduce((a,i)=>a+i.price*i.qty,0));
+}
+window.addToCart=id=>{
+  const p=products.find(x=>x.id===id);if(!p)return;
+  const line=cart.find(x=>x.productId===id);
+  if(line){
+    if(line.qty>=Number(p.stock||0))return toast("Stock insuficiente");
+    line.qty++;
+  }else{
+    cart.push({productId:p.id,name:p.name,price:Number(p.price||0),qty:1,destination:p.destination||"Cocina"});
+  }
+  drawCart();
+};
+window.qty=(id,d)=>{
+  const line=cart.find(x=>x.productId===id),p=products.find(x=>x.id===id);if(!line)return;
+  const next=line.qty+d;
+  if(next>Number(p.stock||0))return toast("Stock insuficiente");
+  if(next<=0)cart=cart.filter(x=>x.productId!==id);else line.qty=next;
+  drawCart();
+};
+window.clearCart=()=>{cart=[];drawCart()};
+
+window.sendOrder=async()=>{
+  if(!cart.length)return toast("Agregá productos");
+  try{
+    const open=orders.find(o=>o.table===selectedTable&&o.status==="Abierta");
+    let orderId;
+    if(open){
+      const combined=(open.items||[]).map(i=>({...i}));
+      for(const item of cart){
+        const found=combined.find(x=>x.productId===item.productId);
+        if(found)found.qty+=item.qty;else combined.push({...item});
+      }
+      await updateDoc(doc(db,"orders",open.id),{
+        items:combined,total:combined.reduce((a,i)=>a+i.price*i.qty,0),updatedAt:serverTimestamp()
+      });
+      orderId=open.id;
+    }else{
+      const ref=await addDoc(collection(db,"orders"),{
+        table:selectedTable,status:"Abierta",items:cart.map(i=>({...i})),
+        total:cart.reduce((a,i)=>a+i.price*i.qty,0),createdAt:serverTimestamp(),createdBy:user.email
+      });
+      orderId=ref.id;
+    }
+
+    const groups={};
+    cart.forEach(i=>(groups[i.destination]??=[]).push({...i}));
+    const batch=writeBatch(db);
+    for(const [destination,items] of Object.entries(groups)){
+      const ref=doc(collection(db,"commands"));
+      batch.set(ref,{orderId,table:selectedTable,destination,items,status:"Pendiente",createdAt:serverTimestamp(),createdBy:user.email});
+    }
+    await batch.commit();
+    cart=[];toast("Pedido enviado");renderCaja();
+  }catch(e){
+    console.error(e);toast("No se pudo enviar: "+(e.code||e.message));
+  }
+};
+
+function renderTables(){
+  title("Mesas","Pedidos abiertos");
+  $("#content").innerHTML=`<div class="grid cols3">${Array.from({length:12},(_,i)=>{
+    const n=String(i+1),o=orders.find(x=>x.table===n&&x.status==="Abierta");
+    return `<section class="card"><h3>Mesa ${n}</h3>${o?`
+      <span class="badge warn">Ocupada</span><p>${(o.items||[]).reduce((a,x)=>a+x.qty,0)} productos</p>
+      <h2>${money(o.total)}</h2><button class="primary" onclick="checkout('${o.id}')">Cobrar</button>`:
+      `<span class="badge ok">Libre</span>`}</section>`;
+  }).join("")}</div>`;
+}
+
+window.checkout=id=>{
+  const o=orders.find(x=>x.id===id);if(!o)return;
+  modal(`<h2>Cobrar Mesa ${esc(o.table)}</h2>
+    <div class="total"><span>Total</span><span>${money(o.total)}</span></div>
+    <label>Medio de pago<select id="payment"><option>Efectivo</option><option>Débito</option><option>Crédito</option><option>QR / Transferencia</option></select></label>
+    <div class="actions"><button class="secondary" onclick="closeModal()">Cancelar</button><button class="primary" id="confirmPay">Confirmar</button></div>`);
+  $("#confirmPay").onclick=()=>completeSale(o);
+};
+
+async function completeSale(o){
+  try{
+    for(const item of o.items||[]){
+      const p=products.find(x=>x.id===item.productId);
+      if(!p||Number(p.stock||0)<item.qty)return toast("Stock insuficiente: "+item.name);
+    }
+    const batch=writeBatch(db);
+    batch.update(doc(db,"orders",o.id),{status:"Pagada",payment:$("#payment").value,paidAt:serverTimestamp()});
+    const saleRef=doc(collection(db,"sales"));
+    batch.set(saleRef,{orderId:o.id,table:o.table,items:o.items,total:o.total,payment:$("#payment").value,createdAt:serverTimestamp(),createdBy:user.email});
+    for(const item of o.items||[]){
+      const p=products.find(x=>x.id===item.productId);
+      batch.update(doc(db,"products",p.id),{stock:Number(p.stock||0)-item.qty});
+    }
+    for(const c of commands.filter(c=>c.orderId===o.id&&c.status!=="Entregado")){
+      batch.update(doc(db,"commands",c.id),{status:"Entregado",updatedAt:serverTimestamp()});
+    }
+    await batch.commit();
+    closeModal();toast("Venta registrada");
+  }catch(e){
+    console.error(e);toast("Error al cobrar: "+(e.code||e.message));
+  }
+}
+
+function renderStation(destination){
+  title(destination,`Comandas de ${destination} en tiempo real`);
+  const list=commands.filter(c=>c.destination===destination&&c.status!=="Entregado");
+  $("#content").innerHTML=list.length?list.map(c=>`
+    <article class="ticket ${c.status==="Listo"?"ready":""}">
+      <div class="ticket-head"><div><h3>Mesa ${esc(c.table)}</h3><span class="muted">Pedido ${esc(c.orderId||"")}</span></div>
+      <span class="badge ${c.status==="Listo"?"ok":"warn"}">${esc(c.status)}</span></div>
+      <ul>${(c.items||[]).map(i=>`<li>${i.qty} × ${esc(i.name)}</li>`).join("")}</ul>
+      <div class="actions">
+        ${c.status==="Pendiente"?`<button class="secondary" onclick="setCommandStatus('${c.id}','Preparando')">Preparar</button>`:""}
+        ${c.status==="Preparando"?`<button class="primary" onclick="setCommandStatus('${c.id}','Listo')">Listo</button>`:""}
+        ${c.status==="Listo"?`<button class="primary" onclick="setCommandStatus('${c.id}','Entregado')">Entregado</button>`:""}
+      </div>
+    </article>`).join(""):`<div class="empty">No hay comandas pendientes.</div>`;
+}
+window.setCommandStatus=async(id,status)=>{
+  try{await updateDoc(doc(db,"commands",id),{status,updatedAt:serverTimestamp()});toast("Estado actualizado")}
+  catch(e){console.error(e);toast("No se pudo actualizar: "+(e.code||e.message))}
+};
+
+function renderProducts(){
+  title("Productos","Precios, destino y stock central");
+  $("#content").innerHTML=`
+    <div class="actions" style="margin-bottom:15px">
+      <button class="primary" onclick="productModal()">Nuevo producto</button>
+      ${products.length===0?`<button class="secondary" onclick="seedProducts()">Crear productos iniciales</button>`:""}
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Categoría</th><th>Destino</th><th>Precio</th><th>Stock</th><th></th></tr></thead>
+    <tbody>${products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.category)}</td><td>${esc(p.destination)}</td><td>${money(p.price)}</td><td>${p.stock||0}</td><td><button class="secondary" onclick="productModal('${p.id}')">Editar</button></td></tr>`).join("")}</tbody></table></div>`;
+}
+window.productModal=id=>{
+  const p=id?products.find(x=>x.id===id):{name:"",category:"Cervezas",destination:"Barra",price:0,stock:0};
+  modal(`<h2>${id?"Editar":"Nuevo"} producto</h2>
+    <label>Nombre<input id="pName" value="${esc(p.name)}"></label>
+    <label>Categoría<input id="pCat" value="${esc(p.category)}"></label>
+    <label>Destino<select id="pDest"><option ${p.destination==="Barra"?"selected":""}>Barra</option><option ${p.destination==="Cocina"?"selected":""}>Cocina</option></select></label>
+    <label>Precio<input id="pPrice" type="number" min="0" value="${p.price}"></label>
+    <label>Stock<input id="pStock" type="number" min="0" value="${p.stock}"></label>
+    <div class="actions"><button class="secondary" onclick="closeModal()">Cancelar</button><button class="primary" id="saveProduct">Guardar</button></div>`);
+  $("#saveProduct").onclick=async()=>{
+    const data={name:$("#pName").value.trim(),category:$("#pCat").value.trim()||"General",destination:$("#pDest").value,price:Number($("#pPrice").value),stock:Number($("#pStock").value),active:true,updatedAt:serverTimestamp()};
+    if(!data.name)return toast("Ingresá el nombre");
+    try{
+      if(id)await updateDoc(doc(db,"products",id),data);
+      else await addDoc(collection(db,"products"),data);
+      closeModal();toast("Producto guardado");
+    }catch(e){console.error(e);toast("Error: "+(e.code||e.message))}
+  };
+};
+window.seedProducts=async()=>{
+  const initial=[
+    {name:"Pinta IPA",category:"Cervezas",destination:"Barra",price:6500,stock:80,active:true},
+    {name:"Pinta Golden",category:"Cervezas",destination:"Barra",price:6000,stock:80,active:true},
+    {name:"Hamburguesa Yagana",category:"Comidas",destination:"Cocina",price:12500,stock:35,active:true},
+    {name:"Papas rústicas",category:"Comidas",destination:"Cocina",price:6500,stock:45,active:true}
+  ];
+  try{
+    const batch=writeBatch(db);
+    initial.forEach(p=>batch.set(doc(collection(db,"products")),{...p,createdAt:serverTimestamp()}));
+    await batch.commit();toast("Productos creados");
+  }catch(e){console.error(e);toast("Error: "+(e.code||e.message))}
+};
+
+function renderSales(){
+  title("Ventas","Historial central");
+  $("#content").innerHTML=sales.length?`
+  <div class="table-wrap"><table><thead><tr><th>ID</th><th>Mesa</th><th>Pago</th><th>Total</th></tr></thead>
+  <tbody>${sales.map(s=>`<tr><td>${esc(s.id)}</td><td>${esc(s.table)}</td><td>${esc(s.payment)}</td><td>${money(s.total)}</td></tr>`).join("")}</tbody></table></div>`:
+  `<div class="empty">No hay ventas.</div>`;
+}
+
+$("#loginBtn").onclick=async()=>{
+  $("#loginError").textContent="";
+  try{await signInWithEmailAndPassword(auth,$("#loginEmail").value.trim(),$("#loginPassword").value)}
+  catch(e){console.error(e);$("#loginError").textContent="No se pudo ingresar. Revisá el correo y la contraseña."}
+};
+$("#loginPassword").addEventListener("keydown",e=>{if(e.key==="Enter")$("#loginBtn").click()});
+$("#logoutBtn").onclick=()=>signOut(auth);
+
+onAuthStateChanged(auth,u=>{
+  user=u;
+  if(!u){
+    unsubs.forEach(f=>f());unsubs=[];
+    $("#loginScreen").classList.remove("hidden");$("#app").classList.add("hidden");
+    return;
+  }
+  role=roleByEmail(u.email);
+  if(role==="sin-permiso"){
+    signOut(auth);$("#loginError").textContent="Ese correo no está autorizado.";return;
+  }
+  $("#loginScreen").classList.add("hidden");$("#app").classList.remove("hidden");
+  $("#roleBadge").textContent=`${role.toUpperCase()} · ${u.email}`;
+  currentView=role==="cocina"?"cocina":role==="barra"?"barra":"inicio";
+  renderNav();startListeners();render();
+});
+
+function updateOnline(){
+  const on=navigator.onLine;
+  $("#onlineBadge").textContent=on?"● En línea":"● Sin conexión";
+  $("#onlineBadge").className="badge "+(on?"ok":"bad");
+}
+addEventListener("online",updateOnline);addEventListener("offline",updateOnline);updateOnline();
+</script>
+</body>
+</html>
