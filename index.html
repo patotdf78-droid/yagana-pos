@@ -59,7 +59,23 @@
     .current-order{background:#0f172a;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px}
     .current-order h3{margin:0 0 9px}
     .current-order .row:last-child{border-bottom:0}
+    .order-line{padding:10px 0;border-bottom:1px solid var(--line)}
+    .order-line:last-child{border-bottom:0}
+    .order-line-main{display:flex;justify-content:space-between;gap:10px}
+    .order-line-status{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-top:7px}
+    .item-note{margin-top:5px;color:#fde68a;font-size:13px}
+    .cart-item{padding:10px 0;border-bottom:1px solid var(--line)}
+    .cart-item:last-child{border-bottom:0}
+    .cart-note{display:block;margin:8px 0 0}
+    .cart-note input{padding:8px;font-size:13px}
+    .check-line{display:flex;align-items:flex-start;gap:10px;padding:10px;border:1px solid var(--line);border-radius:10px;margin:8px 0;background:#0f172a}
+    .check-line input{width:auto;margin-top:3px}
+    .check-line .check-content{flex:1}
+    .payment-box{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#0f172a}
+    .payment-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .elapsed{font-size:12px;color:var(--muted)}
     @media(max-width:900px){.pos,.cols2,.cols3{grid-template-columns:1fr}}
+    @media(max-width:520px){.payment-grid{grid-template-columns:1fr}}
     @media(max-width:720px){
       #app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.sidebar nav{grid-template-columns:repeat(2,1fr)}
       .content{padding:11px}.topbar{position:static}.products{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -89,7 +105,10 @@
   <main>
     <header class="topbar">
       <div><h1 id="pageTitle">Yagana POS</h1><div id="pageSub" class="muted"></div></div>
-      <div class="right"><span id="onlineBadge" class="badge ok">● En línea</span></div>
+      <div class="right" style="display:flex;gap:8px;align-items:center">
+        <button id="soundBtn" class="secondary hidden" type="button">🔔 Sonido</button>
+        <span id="onlineBadge" class="badge ok">● En línea</span>
+      </div>
     </header>
     <div id="content" class="content"></div>
   </main>
@@ -131,6 +150,84 @@ const roleByEmail = email => ({
 
 let user=null, role="sin-permiso", products=[], orders=[], commands=[], sales=[];
 let cart=[], selectedTable="1", currentView="inicio", unsubs=[];
+let audioContext=null;
+let firstCommandsSnapshot=true;
+let soundMuted=false;
+let knownCommandStatuses=new Map();
+
+function soundStorageKey(){
+  return `yagana_sound_muted_${role}`;
+}
+
+function loadSoundPreference(){
+  soundMuted=localStorage.getItem(soundStorageKey())==="true";
+  updateSoundButton();
+}
+
+function updateSoundButton(){
+  const btn=$("#soundBtn");
+  if(!btn)return;
+  const visible=["cocina","barra"].includes(role);
+  btn.classList.toggle("hidden",!visible);
+  btn.textContent=soundMuted?"🔕 Silenciado":"🔔 Sonido";
+  btn.title=soundMuted?"Activar aviso sonoro":"Silenciar avisos";
+}
+
+function ensureAudio(){
+  if(!audioContext){
+    const AudioCtx=window.AudioContext||window.webkitAudioContext;
+    if(AudioCtx)audioContext=new AudioCtx();
+  }
+  if(audioContext&&audioContext.state==="suspended"){
+    audioContext.resume().catch(()=>{});
+  }
+}
+
+function playCommandSound(){
+  if(soundMuted||!["cocina","barra"].includes(role))return;
+  ensureAudio();
+  if(!audioContext)return;
+
+  const start=audioContext.currentTime;
+  const master=audioContext.createGain();
+  master.gain.setValueAtTime(0.0001,start);
+  master.gain.exponentialRampToValueAtTime(0.18,start+0.02);
+  master.gain.exponentialRampToValueAtTime(0.0001,start+0.55);
+  master.connect(audioContext.destination);
+
+  const tones=[
+    {frequency:880,at:0,duration:0.18},
+    {frequency:1175,at:0.22,duration:0.22}
+  ];
+
+  tones.forEach(t=>{
+    const osc=audioContext.createOscillator();
+    const gain=audioContext.createGain();
+    osc.type="sine";
+    osc.frequency.setValueAtTime(t.frequency,start+t.at);
+    gain.gain.setValueAtTime(0.0001,start+t.at);
+    gain.gain.exponentialRampToValueAtTime(0.7,start+t.at+0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001,start+t.at+t.duration);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(start+t.at);
+    osc.stop(start+t.at+t.duration+0.03);
+  });
+}
+
+function toggleSound(){
+  soundMuted=!soundMuted;
+  localStorage.setItem(soundStorageKey(),String(soundMuted));
+  updateSoundButton();
+  if(!soundMuted){
+    ensureAudio();
+    playCommandSound();
+    toast("Aviso sonoro activado");
+  }else{
+    toast("Aviso sonoro silenciado");
+  }
+}
+window.toggleSound=toggleSound;
 
 function toast(msg){
   const t=document.createElement("div");t.className="toast";t.textContent=msg;
@@ -156,8 +253,45 @@ window.setView=setView;
 
 function startListeners(){
   unsubs.forEach(f=>f());unsubs=[];
+  firstCommandsSnapshot=true;
+  knownCommandStatuses=new Map();
   unsubs.push(onSnapshot(collection(db,"products"),snap=>{products=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
-  unsubs.push(onSnapshot(collection(db,"commands"),snap=>{commands=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
+  unsubs.push(onSnapshot(collection(db,"commands"),snap=>{
+    const changes=snap.docChanges();
+    commands=snap.docs.map(d=>({id:d.id,...d.data()}));
+
+    if(!firstCommandsSnapshot){
+      const destination=role==="cocina"?"Cocina":role==="barra"?"Barra":null;
+
+      const incoming=changes.some(change=>{
+        if(change.type!=="added"||!destination)return false;
+        const data=change.doc.data();
+        return data.destination===destination&&data.status==="Pendiente";
+      });
+
+      if(incoming){
+        playCommandSound();
+        toast(`Nueva comanda para ${destination}`);
+      }
+
+      if(["admin","caja"].includes(role)){
+        const readyChange=changes.find(change=>{
+          if(change.type!=="modified")return false;
+          const data=change.doc.data();
+          return data.status==="Listo"&&knownCommandStatuses.get(change.doc.id)!=="Listo";
+        });
+
+        if(readyChange){
+          const data=readyChange.doc.data();
+          toast(`Mesa ${data.table}: pedido listo en ${data.destination}`);
+        }
+      }
+    }
+
+    knownCommandStatuses=new Map(commands.map(c=>[c.id,c.status]));
+    firstCommandsSnapshot=false;
+    render();
+  }));
   if(["admin","caja"].includes(role)){
     unsubs.push(onSnapshot(collection(db,"orders"),snap=>{orders=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
     unsubs.push(onSnapshot(collection(db,"sales"),snap=>{sales=snap.docs.map(d=>({id:d.id,...d.data()}));render()}));
@@ -185,7 +319,42 @@ function commandStatusFor(orderId,destination){
 function statusClass(status){
   if(status==="Entregado"||status==="Listo")return "ok";
   if(status==="Pendiente"||status==="Preparando")return "warn";
+  if(status==="Cancelada")return "bad";
   return "";
+}
+
+function timestampToDate(value){
+  if(!value)return null;
+  if(typeof value.toDate==="function")return value.toDate();
+  if(typeof value.seconds==="number")return new Date(value.seconds*1000);
+  const parsed=new Date(value);
+  return Number.isNaN(parsed.getTime())?null:parsed;
+}
+
+function elapsedText(value){
+  const date=timestampToDate(value);
+  if(!date)return "recién";
+  const minutes=Math.max(0,Math.floor((Date.now()-date.getTime())/60000));
+  if(minutes<1)return "hace menos de 1 min";
+  if(minutes<60)return `hace ${minutes} min`;
+  const hours=Math.floor(minutes/60);
+  const rest=minutes%60;
+  return rest?`hace ${hours} h ${rest} min`:`hace ${hours} h`;
+}
+
+function productCommandStatus(orderId,item){
+  const list=commands.filter(c=>
+    c.orderId===orderId
+    && c.destination===(item.destination||"Cocina")
+    && (c.items||[]).some(ci=>ci.productId===item.productId)
+    && c.status!=="Cancelada"
+  );
+  if(!list.length)return "Sin enviar";
+  if(list.every(c=>c.status==="Entregado"))return "Entregado";
+  if(list.some(c=>c.status==="Pendiente"))return "Pendiente";
+  if(list.some(c=>c.status==="Preparando"))return "Preparando";
+  if(list.some(c=>c.status==="Listo"))return "Listo";
+  return list[0].status||"Sin enviar";
 }
 
 function openTableOrder(table){
@@ -197,7 +366,7 @@ window.openTableOrder=openTableOrder;
 
 function renderHome(){
   title("Inicio","Información compartida en tiempo real");
-  const active=commands.filter(c=>c.status!=="Entregado").length;
+  const active=commands.filter(c=>!["Entregado","Cancelada"].includes(c.status)).length;
   const open=orders.filter(o=>o.status==="Abierta").length;
   const total=sales.reduce((a,s)=>a+Number(s.total||0),0);
   $("#content").innerHTML=`
@@ -214,7 +383,7 @@ function renderHome(){
 }
 
 function renderCaja(){
-  title("Caja","Crear pedidos y enviarlos a Cocina y Barra");
+  title("Caja","Crear pedidos, ver estados y cobrar");
   const cats=["Todas",...new Set(products.map(p=>p.category||"General"))];
   const openOrder=orders.find(o=>o.table===selectedTable&&o.status==="Abierta");
   const cocinaStatus=openOrder?commandStatusFor(openOrder.id,"Cocina"):"Sin pedido";
@@ -227,22 +396,39 @@ function renderCaja(){
     <label>Categoría<select id="catSel">${cats.map(c=>`<option>${esc(c)}</option>`).join("")}</select></label>
     <button class="secondary" onclick="setView('mesas')">Volver a mesas</button>
   </div>
+
   <div class="pos">
     <section class="card"><div id="productGrid" class="products"></div></section>
+
     <section class="card">
       <h2>Mesa ${selectedTable}</h2>
 
       ${openOrder?`
         <div class="current-order">
-          <h3>Cuenta actual</h3>
-          ${(openOrder.items||[]).map(i=>`
-            <div class="row">
-              <span>${i.qty} × ${esc(i.name)}</span>
-              <strong>${money(i.price*i.qty)}</strong>
-            </div>`).join("")}
+          <div class="ticket-head">
+            <h3>Cuenta actual</h3>
+            <span class="elapsed">${elapsedText(openOrder.createdAt||openOrder.updatedAt)}</span>
+          </div>
+
+          ${(openOrder.items||[]).map(i=>{
+            const itemStatus=productCommandStatus(openOrder.id,i);
+            return `
+            <div class="order-line">
+              <div class="order-line-main">
+                <span><strong>${i.qty} × ${esc(i.name)}</strong></span>
+                <strong>${money(i.price*i.qty)}</strong>
+              </div>
+              ${i.note?`<div class="item-note">📝 ${esc(i.note)}</div>`:""}
+              <div class="order-line-status">
+                <span>${i.destination==="Barra"?"🍺":"👨‍🍳"} ${esc(i.destination||"Cocina")}</span>
+                <span class="badge ${statusClass(itemStatus)}">${itemStatus}</span>
+              </div>
+            </div>`;
+          }).join("")}
+
           <div class="total"><span>Acumulado</span><span>${money(openOrder.total)}</span></div>
-          <div class="status-line"><span>👨‍🍳 Cocina</span><span class="badge ${statusClass(cocinaStatus)}">${cocinaStatus}</span></div>
-          <div class="status-line"><span>🍺 Barra</span><span class="badge ${statusClass(barraStatus)}">${barraStatus}</span></div>
+          <div class="status-line"><span>👨‍🍳 Cocina general</span><span class="badge ${statusClass(cocinaStatus)}">${cocinaStatus}</span></div>
+          <div class="status-line"><span>🍺 Barra general</span><span class="badge ${statusClass(barraStatus)}">${barraStatus}</span></div>
         </div>`:
         `<div class="current-order"><span class="badge ok">Mesa libre</span><p class="muted">Agregá productos para iniciar el pedido.</p></div>`
       }
@@ -250,10 +436,12 @@ function renderCaja(){
       <h3>Productos nuevos</h3>
       <div id="cart"></div>
       <div class="total"><span>Nuevo pedido</span><span id="cartTotal"></span></div>
+
       <div class="actions">
         <button class="primary" onclick="sendOrder()">Enviar pedido</button>
         <button class="secondary" onclick="clearCart()">Vaciar</button>
-        ${openOrder?`<button class="secondary" onclick="checkout('${openOrder.id}')">Cobrar mesa</button>`:""}
+        ${openOrder?`<button class="secondary" onclick="checkout('${openOrder.id}')">Cobrar / dividir</button>`:""}
+        ${openOrder?`<button class="danger" onclick="cancelOrder('${openOrder.id}')">Anular pedido</button>`:""}
       </div>
     </section>
   </div>`;
@@ -265,11 +453,18 @@ function renderCaja(){
   };
 
   const drawProducts=()=>{
-    const q=$("#searchProd").value.toLowerCase().trim(),cat=$("#catSel").value;
-    const list=products.filter(p=>p.active!==false&&(cat==="Todas"||p.category===cat)&&(!q||(p.name+" "+p.category).toLowerCase().includes(q)));
+    const q=$("#searchProd").value.toLowerCase().trim();
+    const cat=$("#catSel").value;
+    const list=products.filter(p=>
+      p.active!==false
+      && (cat==="Todas"||p.category===cat)
+      && (!q||(p.name+" "+p.category).toLowerCase().includes(q))
+    );
+
     $("#productGrid").innerHTML=list.length?list.map(p=>`
       <button class="product" onclick="addToCart('${p.id}')" ${Number(p.stock||0)<=0?"disabled":""}>
-        <strong>${esc(p.name)}</strong><span class="price">${money(p.price)}</span>
+        <strong>${esc(p.name)}</strong>
+        <span class="price">${money(p.price)}</span>
         <span class="muted">${esc(p.destination)} · stock ${p.stock||0}</span>
       </button>`).join(""):`<div class="empty">No hay productos.</div>`;
   };
@@ -280,34 +475,78 @@ function renderCaja(){
   drawCart();
 }
 function drawCart(){
-  const root=$("#cart");if(!root)return;
+  const root=$("#cart");
+  if(!root)return;
+
   root.innerHTML=cart.length?cart.map(i=>`
-    <div class="cart-line">
-      <div><strong>${esc(i.name)}</strong><div class="muted">${money(i.price)}</div></div>
-      <div class="qty"><button onclick="qty('${i.productId}',-1)">−</button><strong>${i.qty}</strong><button onclick="qty('${i.productId}',1)">+</button></div>
+    <div class="cart-item">
+      <div class="cart-line">
+        <div>
+          <strong>${esc(i.name)}</strong>
+          <div class="muted">${money(i.price)}</div>
+        </div>
+        <div class="qty">
+          <button onclick="qty('${i.productId}',-1)">−</button>
+          <strong>${i.qty}</strong>
+          <button onclick="qty('${i.productId}',1)">+</button>
+        </div>
+      </div>
+      <label class="cart-note">
+        Observación para ${esc(i.destination||"Cocina")}
+        <input
+          value="${esc(i.note||"")}"
+          placeholder="Ej.: sin cebolla, sin hielo..."
+          onchange="setCartNote('${i.productId}',this.value)">
+      </label>
     </div>`).join(""):`<div class="empty">Pedido vacío.</div>`;
+
   $("#cartTotal").textContent=money(cart.reduce((a,i)=>a+i.price*i.qty,0));
 }
+
 window.addToCart=id=>{
-  const p=products.find(x=>x.id===id);if(!p)return;
+  const p=products.find(x=>x.id===id);
+  if(!p)return;
+
   const line=cart.find(x=>x.productId===id);
   if(line){
     if(line.qty>=Number(p.stock||0))return toast("Stock insuficiente");
     line.qty++;
   }else{
-    cart.push({productId:p.id,name:p.name,price:Number(p.price||0),qty:1,destination:p.destination||"Cocina"});
+    cart.push({
+      productId:p.id,
+      name:p.name,
+      price:Number(p.price||0),
+      qty:1,
+      destination:p.destination||"Cocina",
+      note:""
+    });
   }
   drawCart();
 };
+
+window.setCartNote=(id,note)=>{
+  const line=cart.find(x=>x.productId===id);
+  if(line)line.note=String(note||"").trim();
+};
+
 window.qty=(id,d)=>{
-  const line=cart.find(x=>x.productId===id),p=products.find(x=>x.id===id);if(!line)return;
+  const line=cart.find(x=>x.productId===id);
+  const p=products.find(x=>x.id===id);
+  if(!line)return;
+
   const next=line.qty+d;
   if(next>Number(p.stock||0))return toast("Stock insuficiente");
-  if(next<=0)cart=cart.filter(x=>x.productId!==id);else line.qty=next;
+
+  if(next<=0)cart=cart.filter(x=>x.productId!==id);
+  else line.qty=next;
+
   drawCart();
 };
-window.clearCart=()=>{cart=[];drawCart()};
 
+window.clearCart=()=>{
+  cart=[];
+  drawCart();
+};
 window.sendOrder=async()=>{
   if(!cart.length)return toast("Agregá productos");
   try{
@@ -316,7 +555,7 @@ window.sendOrder=async()=>{
     if(open){
       const combined=(open.items||[]).map(i=>({...i}));
       for(const item of cart){
-        const found=combined.find(x=>x.productId===item.productId);
+        const found=combined.find(x=>x.productId===item.productId&&(x.note||"")===(item.note||""));
         if(found)found.qty+=item.qty;else combined.push({...item});
       }
       await updateDoc(doc(db,"orders",open.id),{
@@ -346,7 +585,8 @@ window.sendOrder=async()=>{
 };
 
 function renderTables(){
-  title("Mesas","Tocá una mesa para abrir o agregar un pedido");
+  title("Mesas","Tocá una mesa para abrir, agregar o cobrar");
+
   $("#content").innerHTML=`<div class="grid cols3">${Array.from({length:12},(_,i)=>{
     const n=String(i+1);
     const o=orders.find(x=>x.table===n&&x.status==="Abierta");
@@ -360,7 +600,10 @@ function renderTables(){
       tabindex="0"
       onkeydown="if(event.key==='Enter')openTableOrder('${n}')">
 
-      <h3>Mesa ${n}</h3>
+      <div class="ticket-head">
+        <h3>Mesa ${n}</h3>
+        ${o?`<span class="elapsed">${elapsedText(o.createdAt||o.updatedAt)}</span>`:""}
+      </div>
 
       ${o?`
         <span class="badge warn">Ocupada</span>
@@ -379,7 +622,8 @@ function renderTables(){
 
         <div class="actions">
           <button class="primary" onclick="event.stopPropagation();openTableOrder('${n}')">Agregar pedido</button>
-          <button class="secondary" onclick="event.stopPropagation();checkout('${o.id}')">Cobrar</button>
+          <button class="secondary" onclick="event.stopPropagation();checkout('${o.id}')">Cobrar / dividir</button>
+          <button class="danger" onclick="event.stopPropagation();cancelOrder('${o.id}')">Anular</button>
         </div>`:
         `<span class="badge ok">Libre</span>
          <p class="muted">Tocá la mesa para cargar el pedido.</p>
@@ -389,46 +633,326 @@ function renderTables(){
   }).join("")}</div>`;
 }
 window.checkout=id=>{
-  const o=orders.find(x=>x.id===id);if(!o)return;
+  const o=orders.find(x=>x.id===id);
+  if(!o)return;
+
   modal(`<h2>Cobrar Mesa ${esc(o.table)}</h2>
-    <div class="total"><span>Total</span><span>${money(o.total)}</span></div>
-    <label>Medio de pago<select id="payment"><option>Efectivo</option><option>Débito</option><option>Crédito</option><option>QR / Transferencia</option></select></label>
-    <div class="actions"><button class="secondary" onclick="closeModal()">Cancelar</button><button class="primary" id="confirmPay">Confirmar</button></div>`);
+    <p class="muted">Marcá qué productos paga este cliente. Los no seleccionados quedan abiertos en la mesa.</p>
+
+    <div id="payItems">
+      ${(o.items||[]).map((i,index)=>`
+        <label class="check-line">
+          <input class="pay-item" type="checkbox" data-index="${index}" checked>
+          <span class="check-content">
+            <strong>${i.qty} × ${esc(i.name)}</strong>
+            ${i.note?`<div class="item-note">📝 ${esc(i.note)}</div>`:""}
+            <div class="muted">${esc(i.destination||"")} · ${money(i.price*i.qty)}</div>
+          </span>
+        </label>`).join("")}
+    </div>
+
+    <div class="total"><span>Total seleccionado</span><span id="selectedTotal">${money(o.total)}</span></div>
+
+    <div class="payment-box">
+      <label>Forma de cobro
+        <select id="paymentMode">
+          <option value="single">Un solo medio</option>
+          <option value="combined">Pago combinado</option>
+        </select>
+      </label>
+
+      <div id="singlePayment">
+        <label>Medio de pago
+          <select id="payment">
+            <option>Efectivo</option>
+            <option>Débito</option>
+            <option>Crédito</option>
+            <option>QR / Transferencia</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="combinedPayment" class="hidden">
+        <div class="payment-grid">
+          <label>Primer medio
+            <select id="payment1">
+              <option>Efectivo</option>
+              <option>Débito</option>
+              <option>Crédito</option>
+              <option>QR / Transferencia</option>
+            </select>
+          </label>
+          <label>Importe
+            <input id="amount1" type="number" min="0" step="0.01">
+          </label>
+          <label>Segundo medio
+            <select id="payment2">
+              <option>QR / Transferencia</option>
+              <option>Efectivo</option>
+              <option>Débito</option>
+              <option>Crédito</option>
+            </select>
+          </label>
+          <label>Importe
+            <input id="amount2" type="number" min="0" step="0.01">
+          </label>
+        </div>
+        <p id="paymentDifference" class="muted"></p>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="secondary" onclick="closeModal()">Cancelar</button>
+      <button class="primary" id="confirmPay">Confirmar cobro</button>
+    </div>`);
+
+  const calculateSelected=()=>{
+    const indexes=[...document.querySelectorAll(".pay-item:checked")].map(el=>Number(el.dataset.index));
+    const total=(o.items||[])
+      .filter((_,index)=>indexes.includes(index))
+      .reduce((sum,item)=>sum+Number(item.price)*Number(item.qty),0);
+
+    $("#selectedTotal").textContent=money(total);
+    $("#selectedTotal").dataset.value=String(total);
+
+    if($("#paymentMode").value==="combined"){
+      const a1=Number($("#amount1").value||0);
+      if(!$("#amount1").dataset.touched){
+        $("#amount1").value=(total/2).toFixed(2);
+        $("#amount2").value=(total-total/2).toFixed(2);
+      }
+      const current1=Number($("#amount1").value||0);
+      const current2=Number($("#amount2").value||0);
+      const diff=total-current1-current2;
+      $("#paymentDifference").textContent=Math.abs(diff)<0.01
+        ?"Importes completos"
+        :`Falta completar ${money(diff)}`;
+      $("#paymentDifference").className=Math.abs(diff)<0.01?"badge ok":"badge warn";
+    }
+  };
+
+  document.querySelectorAll(".pay-item").forEach(el=>el.onchange=calculateSelected);
+
+  $("#paymentMode").onchange=()=>{
+    const combined=$("#paymentMode").value==="combined";
+    $("#singlePayment").classList.toggle("hidden",combined);
+    $("#combinedPayment").classList.toggle("hidden",!combined);
+    calculateSelected();
+  };
+
+  $("#amount1").oninput=()=>{
+    $("#amount1").dataset.touched="true";
+    const total=Number($("#selectedTotal").dataset.value||0);
+    const amount1=Number($("#amount1").value||0);
+    $("#amount2").value=Math.max(0,total-amount1).toFixed(2);
+    calculateSelected();
+  };
+
+  $("#amount2").oninput=()=>{
+    $("#amount1").dataset.touched="true";
+    calculateSelected();
+  };
+
   $("#confirmPay").onclick=()=>completeSale(o);
+  calculateSelected();
 };
 
 async function completeSale(o){
   try{
-    for(const item of o.items||[]){
-      const p=products.find(x=>x.id===item.productId);
-      if(!p||Number(p.stock||0)<item.qty)return toast("Stock insuficiente: "+item.name);
+    const selectedIndexes=[...document.querySelectorAll(".pay-item:checked")]
+      .map(el=>Number(el.dataset.index));
+
+    if(!selectedIndexes.length)return toast("Seleccioná al menos un producto");
+
+    const selectedItems=(o.items||[])
+      .filter((_,index)=>selectedIndexes.includes(index))
+      .map(item=>({...item}));
+
+    const remainingItems=(o.items||[])
+      .filter((_,index)=>!selectedIndexes.includes(index))
+      .map(item=>({...item}));
+
+    const total=selectedItems.reduce(
+      (sum,item)=>sum+Number(item.price)*Number(item.qty),0
+    );
+
+    let payments=[];
+    let paymentText="";
+
+    if($("#paymentMode").value==="single"){
+      paymentText=$("#payment").value;
+      payments=[{method:paymentText,amount:total}];
+    }else{
+      const amount1=Number($("#amount1").value||0);
+      const amount2=Number($("#amount2").value||0);
+
+      if(amount1<0||amount2<0)return toast("Los importes no pueden ser negativos");
+      if(Math.abs(amount1+amount2-total)>0.01){
+        return toast("Los dos importes deben sumar el total seleccionado");
+      }
+
+      payments=[
+        {method:$("#payment1").value,amount:amount1},
+        {method:$("#payment2").value,amount:amount2}
+      ].filter(p=>p.amount>0);
+
+      paymentText=payments.map(p=>`${p.method}: ${money(p.amount)}`).join(" + ");
     }
+
+    const soldByProduct=new Map();
+    for(const item of selectedItems){
+      soldByProduct.set(
+        item.productId,
+        (soldByProduct.get(item.productId)||0)+Number(item.qty)
+      );
+    }
+
+    for(const [productId,qty] of soldByProduct.entries()){
+      const p=products.find(x=>x.id===productId);
+      if(!p||Number(p.stock||0)<qty){
+        return toast(`Stock insuficiente: ${p?.name||"producto"}`);
+      }
+    }
+
     const batch=writeBatch(db);
-    batch.update(doc(db,"orders",o.id),{status:"Pagada",payment:$("#payment").value,paidAt:serverTimestamp()});
+
+    if(remainingItems.length){
+      batch.update(doc(db,"orders",o.id),{
+        items:remainingItems,
+        total:remainingItems.reduce((sum,item)=>sum+Number(item.price)*Number(item.qty),0),
+        updatedAt:serverTimestamp(),
+        lastPaymentAt:serverTimestamp(),
+        lastPaymentBy:user.email
+      });
+    }else{
+      batch.update(doc(db,"orders",o.id),{
+        status:"Pagada",
+        payment:paymentText,
+        payments,
+        paidAt:serverTimestamp(),
+        paidBy:user.email
+      });
+    }
+
     const saleRef=doc(collection(db,"sales"));
-    batch.set(saleRef,{orderId:o.id,table:o.table,items:o.items,total:o.total,payment:$("#payment").value,createdAt:serverTimestamp(),createdBy:user.email});
-    for(const item of o.items||[]){
-      const p=products.find(x=>x.id===item.productId);
-      batch.update(doc(db,"products",p.id),{stock:Number(p.stock||0)-item.qty});
+    batch.set(saleRef,{
+      orderId:o.id,
+      table:o.table,
+      items:selectedItems,
+      total,
+      payment:paymentText,
+      payments,
+      partial:remainingItems.length>0,
+      createdAt:serverTimestamp(),
+      createdBy:user.email
+    });
+
+    for(const [productId,qty] of soldByProduct.entries()){
+      const p=products.find(x=>x.id===productId);
+      batch.update(doc(db,"products",p.id),{
+        stock:Number(p.stock||0)-qty
+      });
     }
-    for(const c of commands.filter(c=>c.orderId===o.id&&c.status!=="Entregado")){
-      batch.update(doc(db,"commands",c.id),{status:"Entregado",updatedAt:serverTimestamp()});
+
+    if(!remainingItems.length){
+      for(const c of commands.filter(c=>
+        c.orderId===o.id&&!["Entregado","Cancelada"].includes(c.status)
+      )){
+        batch.update(doc(db,"commands",c.id),{
+          status:"Entregado",
+          updatedAt:serverTimestamp()
+        });
+      }
     }
+
     await batch.commit();
-    closeModal();toast("Venta registrada");
+    closeModal();
+    toast(remainingItems.length
+      ?"Pago parcial registrado; la mesa sigue abierta"
+      :"Venta registrada y mesa cerrada"
+    );
+
   }catch(e){
-    console.error(e);toast("Error al cobrar: "+(e.code||e.message));
+    console.error(e);
+    toast("Error al cobrar: "+(e.code||e.message));
   }
 }
 
+window.cancelOrder=id=>{
+  const o=orders.find(x=>x.id===id);
+  if(!o)return;
+
+  modal(`<h2>Anular pedido · Mesa ${esc(o.table)}</h2>
+    <p class="muted">El pedido dejará de aparecer como mesa abierta. El motivo quedará guardado.</p>
+    <label>Motivo
+      <input id="cancelReason" placeholder="Ej.: cliente se retiró, pedido duplicado...">
+    </label>
+    <div class="actions">
+      <button class="secondary" onclick="closeModal()">Volver</button>
+      <button class="danger" id="confirmCancel">Confirmar anulación</button>
+    </div>`);
+
+  $("#confirmCancel").onclick=async()=>{
+    const reason=$("#cancelReason").value.trim();
+    if(!reason)return toast("Ingresá el motivo");
+
+    try{
+      const batch=writeBatch(db);
+      batch.update(doc(db,"orders",o.id),{
+        status:"Cancelada",
+        cancelReason:reason,
+        cancelledAt:serverTimestamp(),
+        cancelledBy:user.email
+      });
+
+      for(const c of commands.filter(c=>
+        c.orderId===o.id&&!["Entregado","Cancelada"].includes(c.status)
+      )){
+        batch.update(doc(db,"commands",c.id),{
+          status:"Cancelada",
+          cancelReason:reason,
+          updatedAt:serverTimestamp()
+        });
+      }
+
+      await batch.commit();
+      closeModal();
+      toast("Pedido anulado");
+    }catch(e){
+      console.error(e);
+      toast("No se pudo anular: "+(e.code||e.message));
+    }
+  };
+};
 function renderStation(destination){
   title(destination,`Comandas de ${destination} en tiempo real`);
-  const list=commands.filter(c=>c.destination===destination&&c.status!=="Entregado");
+
+  const list=commands
+    .filter(c=>c.destination===destination&&!["Entregado","Cancelada"].includes(c.status))
+    .sort((a,b)=>{
+      const da=timestampToDate(a.createdAt)?.getTime()||0;
+      const db=timestampToDate(b.createdAt)?.getTime()||0;
+      return da-db;
+    });
+
   $("#content").innerHTML=list.length?list.map(c=>`
     <article class="ticket ${c.status==="Listo"?"ready":""}">
-      <div class="ticket-head"><div><h3>Mesa ${esc(c.table)}</h3><span class="muted">Pedido ${esc(c.orderId||"")}</span></div>
-      <span class="badge ${c.status==="Listo"?"ok":"warn"}">${esc(c.status)}</span></div>
-      <ul>${(c.items||[]).map(i=>`<li>${i.qty} × ${esc(i.name)}</li>`).join("")}</ul>
+      <div class="ticket-head">
+        <div>
+          <h3>Mesa ${esc(c.table)}</h3>
+          <span class="elapsed">${elapsedText(c.createdAt)}</span>
+        </div>
+        <span class="badge ${c.status==="Listo"?"ok":"warn"}">${esc(c.status)}</span>
+      </div>
+
+      <div style="margin-top:10px">
+        ${(c.items||[]).map(i=>`
+          <div class="order-line">
+            <strong>${i.qty} × ${esc(i.name)}</strong>
+            ${i.note?`<div class="item-note">📝 ${esc(i.note)}</div>`:""}
+          </div>`).join("")}
+      </div>
+
       <div class="actions">
         ${c.status==="Pendiente"?`<button class="secondary" onclick="setCommandStatus('${c.id}','Preparando')">Preparar</button>`:""}
         ${c.status==="Preparando"?`<button class="primary" onclick="setCommandStatus('${c.id}','Listo')">Listo</button>`:""}
@@ -488,11 +1012,12 @@ function renderSales(){
   title("Ventas","Historial central");
   $("#content").innerHTML=sales.length?`
   <div class="table-wrap"><table><thead><tr><th>ID</th><th>Mesa</th><th>Pago</th><th>Total</th></tr></thead>
-  <tbody>${sales.map(s=>`<tr><td>${esc(s.id)}</td><td>${esc(s.table)}</td><td>${esc(s.payment)}</td><td>${money(s.total)}</td></tr>`).join("")}</tbody></table></div>`:
+  <tbody>${sales.map(s=>`<tr><td>${esc(s.id)}</td><td>${esc(s.table)} ${s.partial?`<span class="badge warn">Parcial</span>`:""}</td><td>${esc(s.payment)}</td><td>${money(s.total)}</td></tr>`).join("")}</tbody></table></div>`:
   `<div class="empty">No hay ventas.</div>`;
 }
 
 $("#loginBtn").onclick=async()=>{
+  ensureAudio();
   $("#loginError").textContent="";
   try{await signInWithEmailAndPassword(auth,$("#loginEmail").value.trim(),$("#loginPassword").value)}
   catch(e){console.error(e);$("#loginError").textContent="No se pudo ingresar. Revisá el correo y la contraseña."}
@@ -513,6 +1038,8 @@ onAuthStateChanged(auth,u=>{
   }
   $("#loginScreen").classList.add("hidden");$("#app").classList.remove("hidden");
   $("#roleBadge").textContent=`${role.toUpperCase()} · ${u.email}`;
+  loadSoundPreference();
+  $("#soundBtn").onclick=toggleSound;
   currentView=role==="cocina"?"cocina":role==="barra"?"barra":"inicio";
   renderNav();startListeners();render();
 });
@@ -522,7 +1049,13 @@ function updateOnline(){
   $("#onlineBadge").textContent=on?"● En línea":"● Sin conexión";
   $("#onlineBadge").className="badge "+(on?"ok":"bad");
 }
-addEventListener("online",updateOnline);addEventListener("offline",updateOnline);updateOnline();
+addEventListener("online",updateOnline);
+addEventListener("offline",updateOnline);
+document.addEventListener("pointerdown",ensureAudio,{once:true});
+setInterval(()=>{
+  if(user&&["caja","mesas","cocina","barra"].includes(currentView))render();
+},30000);
+updateOnline();
 </script>
 </body>
 </html>
