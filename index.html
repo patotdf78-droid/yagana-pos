@@ -37,8 +37,15 @@
     .badge{display:inline-block;padding:5px 9px;border-radius:999px;background:#374151;font-size:12px}.badge.ok{background:rgba(34,197,94,.18);color:#86efac}.badge.warn{background:rgba(245,158,11,.18);color:#fde68a}.badge.bad{background:rgba(239,68,68,.18);color:#fca5a5}
     .pos{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(320px,.75fr);gap:15px}
     .products{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
-    .product{background:var(--panel2);color:white;border:1px solid var(--line);border-radius:13px;padding:13px;text-align:left;display:grid;gap:7px}
-    .product:disabled{opacity:.45}.price{color:var(--accent2);font-weight:900}
+    .product-wrap{background:var(--panel2);border:1px solid var(--line);border-radius:13px;padding:12px;display:grid;gap:9px}
+    .product-wrap:hover{border-color:var(--accent)}
+    .product-info{display:grid;gap:6px}
+    .product-actions{display:grid;grid-template-columns:1fr auto;gap:7px}
+    .product-add,.product-note-btn{border:0;border-radius:9px;padding:9px}
+    .product-add{background:var(--accent);color:#111827;font-weight:800}
+    .product-note-btn{background:#374151;color:white}
+    .product-add:disabled,.product-note-btn:disabled{opacity:.45;cursor:not-allowed}
+    .price{color:var(--accent2);font-weight:900}
     .cart-line,.row{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
     .qty{display:flex;align-items:center;gap:7px}.qty button{border:0;border-radius:7px;width:29px;height:29px;background:#374151;color:white}
     .total{display:flex;justify-content:space-between;font-size:23px;font-weight:900;margin-top:14px}
@@ -74,6 +81,11 @@
     .payment-box{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:12px;background:#0f172a}
     .payment-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
     .elapsed{font-size:12px;color:var(--muted)}
+    .mini-items{display:grid;gap:7px;margin-top:10px}
+    .mini-item{background:#0f172a;border:1px solid var(--line);border-radius:9px;padding:8px}
+    .mini-item-main{display:flex;justify-content:space-between;gap:8px}
+    .role-table td:first-child{font-weight:800}
+    .admin-note{border-left:4px solid var(--accent);padding:10px 12px;background:#0f172a;border-radius:9px}
     @media(max-width:900px){.pos,.cols2,.cols3{grid-template-columns:1fr}}
     @media(max-width:520px){.payment-grid{grid-template-columns:1fr}}
     @media(max-width:720px){
@@ -98,7 +110,7 @@
 
 <div id="app" class="hidden">
   <aside class="sidebar">
-    <div class="brand"><div class="logo">Y</div><div><strong>Yagana</strong><div class="muted">Sistema central</div></div></div>
+    <div class="brand"><div class="logo">Y</div><div><strong>Yagana</strong><div class="muted">Sistema central · v5</div></div></div>
     <nav id="nav"></nav>
     <div class="side-bottom"><span id="roleBadge" class="badge"></span><button id="logoutBtn" class="secondary">Cerrar sesión</button></div>
   </aside>
@@ -120,7 +132,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-app.js";
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, doc, updateDoc, onSnapshot,
+  getFirestore, collection, addDoc, doc, updateDoc, deleteDoc, onSnapshot,
   writeBatch, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.16.0/firebase-firestore.js";
 
@@ -239,9 +251,33 @@ window.closeModal=closeModal;
 
 function navForRole(){
   const items=[];
-  if(["admin","caja"].includes(role))items.push(["inicio","📊 Inicio"],["caja","🛒 Caja"],["mesas","🪑 Mesas"],["productos","📦 Productos"],["ventas","🧾 Ventas"]);
-  if(["admin","cocina"].includes(role))items.push(["cocina","👨‍🍳 Cocina"]);
-  if(["admin","barra"].includes(role))items.push(["barra","🍺 Barra"]);
+
+  if(role==="admin"){
+    items.push(
+      ["inicio","📊 Inicio"],
+      ["caja","🛒 Caja"],
+      ["mesas","🪑 Mesas"],
+      ["productos","📦 Productos"],
+      ["ventas","🧾 Ventas"],
+      ["cocina","👨‍🍳 Cocina"],
+      ["barra","🍺 Barra"],
+      ["administracion","🛡️ Administración"]
+    );
+  }
+
+  if(role==="caja"){
+    items.push(
+      ["inicio","📊 Inicio"],
+      ["caja","🛒 Caja"],
+      ["mesas","🪑 Mesas"],
+      ["productos","📦 Consultar stock"],
+      ["ventas","🧾 Ventas"]
+    );
+  }
+
+  if(role==="cocina")items.push(["cocina","👨‍🍳 Cocina"]);
+  if(role==="barra")items.push(["barra","🍺 Barra"]);
+
   return items;
 }
 function renderNav(){
@@ -301,7 +337,8 @@ function render(){
   if(!user)return;
   const map={
     inicio:renderHome,caja:renderCaja,mesas:renderTables,productos:renderProducts,
-    ventas:renderSales,cocina:()=>renderStation("Cocina"),barra:()=>renderStation("Barra")
+    ventas:renderSales,cocina:()=>renderStation("Cocina"),barra:()=>renderStation("Barra"),
+    administracion:renderAdministration
   };
   (map[currentView]||renderHome)();
 }
@@ -365,7 +402,7 @@ function openTableOrder(table){
 window.openTableOrder=openTableOrder;
 
 function renderHome(){
-  title("Inicio","Información compartida en tiempo real");
+  title("Inicio","Información compartida en tiempo real · v5");
   const active=commands.filter(c=>!["Entregado","Cancelada"].includes(c.status)).length;
   const open=orders.filter(o=>o.status==="Abierta").length;
   const total=sales.reduce((a,s)=>a+Number(s.total||0),0);
@@ -462,11 +499,17 @@ function renderCaja(){
     );
 
     $("#productGrid").innerHTML=list.length?list.map(p=>`
-      <button class="product" onclick="addToCart('${p.id}')" ${Number(p.stock||0)<=0?"disabled":""}>
-        <strong>${esc(p.name)}</strong>
-        <span class="price">${money(p.price)}</span>
-        <span class="muted">${esc(p.destination)} · stock ${p.stock||0}</span>
-      </button>`).join(""):`<div class="empty">No hay productos.</div>`;
+      <article class="product-wrap">
+        <div class="product-info">
+          <strong>${esc(p.name)}</strong>
+          <span class="price">${money(p.price)}</span>
+          <span class="muted">${esc(p.destination)} · stock ${p.stock||0}</span>
+        </div>
+        <div class="product-actions">
+          <button class="product-add" onclick="addToCart('${p.id}')" ${Number(p.stock||0)<=0?"disabled":""}>+ Agregar</button>
+          <button class="product-note-btn" onclick="addWithNote('${p.id}')" ${Number(p.stock||0)<=0?"disabled":""} title="Agregar con observación">📝</button>
+        </div>
+      </article>`).join(""):`<div class="empty">No hay productos.</div>`;
   };
 
   $("#searchProd").oninput=drawProducts;
@@ -492,10 +535,10 @@ function drawCart(){
         </div>
       </div>
       <label class="cart-note">
-        Observación para ${esc(i.destination||"Cocina")}
+        📝 Observación para ${esc(i.destination||"Cocina")}
         <input
           value="${esc(i.note||"")}"
-          placeholder="Ej.: sin cebolla, sin hielo..."
+          placeholder="Escribí aquí: sin cebolla, sin hielo..."
           onchange="setCartNote('${i.productId}',this.value)">
       </label>
     </div>`).join(""):`<div class="empty">Pedido vacío.</div>`;
@@ -522,6 +565,46 @@ window.addToCart=id=>{
     });
   }
   drawCart();
+};
+
+window.addWithNote=id=>{
+  const p=products.find(x=>x.id===id);
+  if(!p)return;
+
+  modal(`<h2>${esc(p.name)}</h2>
+    <p class="muted">La observación llegará directamente a ${esc(p.destination||"Cocina")}.</p>
+    <label>Cantidad
+      <input id="noteQty" type="number" min="1" max="${Number(p.stock||0)}" value="1">
+    </label>
+    <label>Observación
+      <input id="noteText" placeholder="Ej.: sin cebolla, sin hielo, bien cocido...">
+    </label>
+    <div class="actions">
+      <button class="secondary" onclick="closeModal()">Cancelar</button>
+      <button class="primary" id="confirmNoteAdd">Agregar al pedido</button>
+    </div>`);
+
+  $("#confirmNoteAdd").onclick=()=>{
+    const qty=Math.max(1,Number($("#noteQty").value||1));
+    const note=$("#noteText").value.trim();
+
+    if(qty>Number(p.stock||0))return toast("Stock insuficiente");
+
+    const existing=cart.find(x=>x.productId===p.id&&(x.note||"")===note);
+    if(existing)existing.qty+=qty;
+    else cart.push({
+      productId:p.id,
+      name:p.name,
+      price:Number(p.price||0),
+      qty,
+      destination:p.destination||"Cocina",
+      note
+    });
+
+    closeModal();
+    drawCart();
+    toast(note?"Producto agregado con observación":"Producto agregado");
+  };
 };
 
 window.setCartNote=(id,note)=>{
@@ -618,6 +701,20 @@ function renderTables(){
         <div class="status-line">
           <span>🍺 Barra</span>
           <span class="badge ${statusClass(barraStatus)}">${barraStatus}</span>
+        </div>
+
+        <div class="mini-items">
+          ${(o.items||[]).map(item=>{
+            const itemStatus=productCommandStatus(o.id,item);
+            return `<div class="mini-item">
+              <div class="mini-item-main">
+                <strong>${item.qty} × ${esc(item.name)}</strong>
+                <span class="badge ${statusClass(itemStatus)}">${itemStatus}</span>
+              </div>
+              <div class="muted">${item.destination==="Barra"?"🍺":"👨‍🍳"} ${esc(item.destination||"Cocina")}</div>
+              ${item.note?`<div class="item-note">📝 ${esc(item.note)}</div>`:""}
+            </div>`;
+          }).join("")}
         </div>
 
         <div class="actions">
@@ -966,16 +1063,43 @@ window.setCommandStatus=async(id,status)=>{
 };
 
 function renderProducts(){
-  title("Productos","Precios, destino y stock central");
+  const isAdmin=role==="admin";
+  title(isAdmin?"Productos":"Consulta de stock",isAdmin?"Administración de precios, destinos y stock":"Vista de solo lectura para Caja");
+
   $("#content").innerHTML=`
-    <div class="actions" style="margin-bottom:15px">
-      <button class="primary" onclick="productModal()">Nuevo producto</button>
-      ${products.length===0?`<button class="secondary" onclick="seedProducts()">Crear productos iniciales</button>`:""}
-    </div>
-    <div class="table-wrap"><table><thead><tr><th>Producto</th><th>Categoría</th><th>Destino</th><th>Precio</th><th>Stock</th><th></th></tr></thead>
-    <tbody>${products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.category)}</td><td>${esc(p.destination)}</td><td>${money(p.price)}</td><td>${p.stock||0}</td><td><button class="secondary" onclick="productModal('${p.id}')">Editar</button></td></tr>`).join("")}</tbody></table></div>`;
+    ${isAdmin?`
+      <div class="actions" style="margin-bottom:15px">
+        <button class="primary" onclick="productModal()">Nuevo producto</button>
+        ${products.length===0?`<button class="secondary" onclick="seedProducts()">Crear productos iniciales</button>`:""}
+      </div>`:
+      `<div class="admin-note" style="margin-bottom:15px">
+        Caja puede consultar precios y stock. Solo Administrador puede crear, editar o eliminar productos.
+      </div>`
+    }
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Producto</th><th>Categoría</th><th>Destino</th><th>Precio</th><th>Stock</th>${isAdmin?"<th>Acciones</th>":""}</tr></thead>
+        <tbody>
+          ${products.map(p=>`<tr>
+            <td>${esc(p.name)}</td>
+            <td>${esc(p.category)}</td>
+            <td>${esc(p.destination)}</td>
+            <td>${money(p.price)}</td>
+            <td><span class="badge ${Number(p.stock||0)<=5?"warn":"ok"}">${p.stock||0}</span></td>
+            ${isAdmin?`<td>
+              <div class="actions" style="margin:0">
+                <button class="secondary" onclick="productModal('${p.id}')">Editar</button>
+                <button class="danger" onclick="deleteProduct('${p.id}')">Eliminar</button>
+              </div>
+            </td>`:""}
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
 }
 window.productModal=id=>{
+  if(role!=="admin")return toast("Solo Administrador puede modificar productos");
   const p=id?products.find(x=>x.id===id):{name:"",category:"Cervezas",destination:"Barra",price:0,stock:0};
   modal(`<h2>${id?"Editar":"Nuevo"} producto</h2>
     <label>Nombre<input id="pName" value="${esc(p.name)}"></label>
@@ -994,7 +1118,23 @@ window.productModal=id=>{
     }catch(e){console.error(e);toast("Error: "+(e.code||e.message))}
   };
 };
+window.deleteProduct=async id=>{
+  if(role!=="admin")return toast("Solo Administrador puede eliminar productos");
+  const p=products.find(x=>x.id===id);
+  if(!p)return;
+  if(!confirm(`¿Eliminar ${p.name}?`))return;
+
+  try{
+    await deleteDoc(doc(db,"products",id));
+    toast("Producto eliminado");
+  }catch(e){
+    console.error(e);
+    toast("No se pudo eliminar: "+(e.code||e.message));
+  }
+};
+
 window.seedProducts=async()=>{
+  if(role!=="admin")return toast("Solo Administrador puede crear productos");
   const initial=[
     {name:"Pinta IPA",category:"Cervezas",destination:"Barra",price:6500,stock:80,active:true},
     {name:"Pinta Golden",category:"Cervezas",destination:"Barra",price:6000,stock:80,active:true},
@@ -1007,6 +1147,37 @@ window.seedProducts=async()=>{
     await batch.commit();toast("Productos creados");
   }catch(e){console.error(e);toast("Error: "+(e.code||e.message))}
 };
+
+function renderAdministration(){
+  title("Administración","Permisos y control general");
+
+  $("#content").innerHTML=`
+    <div class="grid cols3">
+      <section class="card"><div class="muted">Productos</div><h2>${products.length}</h2></section>
+      <section class="card"><div class="muted">Mesas abiertas</div><h2>${orders.filter(o=>o.status==="Abierta").length}</h2></section>
+      <section class="card"><div class="muted">Comandas activas</div><h2>${commands.filter(c=>!["Entregado","Cancelada"].includes(c.status)).length}</h2></section>
+    </div>
+
+    <section class="card" style="margin-top:15px">
+      <h2>Diferencia entre usuarios</h2>
+      <div class="table-wrap">
+        <table class="role-table">
+          <thead><tr><th>Usuario</th><th>Qué puede hacer</th></tr></thead>
+          <tbody>
+            <tr><td>Administrador</td><td>Ve todos los módulos; administra productos, precios y stock; supervisa Cocina y Barra; elimina productos y ve ventas.</td></tr>
+            <tr><td>Caja</td><td>Abre mesas, carga pedidos, cobra, divide cuentas, registra pagos y consulta stock. No edita ni elimina productos.</td></tr>
+            <tr><td>Cocina</td><td>Solo recibe comandas de Cocina y cambia Pendiente, Preparando, Listo y Entregado.</td></tr>
+            <tr><td>Barra</td><td>Solo recibe comandas de Barra y cambia Pendiente, Preparando, Listo y Entregado.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" style="margin-top:15px">
+      <h2>Confirmación de versión</h2>
+      <p>Estás usando <strong>Yagana POS v5</strong>. Si no ves este texto después de actualizar GitHub, el navegador sigue mostrando una copia anterior.</p>
+    </section>`;
+}
 
 function renderSales(){
   title("Ventas","Historial central");
