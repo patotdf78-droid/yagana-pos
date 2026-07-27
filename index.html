@@ -51,6 +51,14 @@
     .toast{position:fixed;right:16px;bottom:16px;background:#111827;border:1px solid var(--line);border-radius:11px;padding:12px 14px;z-index:100}
     .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;padding:18px;z-index:90}
     .modal{width:min(560px,100%);background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:18px}
+    .table-card{cursor:pointer;transition:transform .15s,border-color .15s,background .15s}
+    .table-card:hover{transform:translateY(-2px);border-color:var(--accent)}
+    .table-card.free{border-color:#166534}
+    .table-card.occupied{border-color:#b45309}
+    .status-line{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:8px}
+    .current-order{background:#0f172a;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:14px}
+    .current-order h3{margin:0 0 9px}
+    .current-order .row:last-child{border-bottom:0}
     @media(max-width:900px){.pos,.cols2,.cols3{grid-template-columns:1fr}}
     @media(max-width:720px){
       #app{grid-template-columns:1fr}.sidebar{position:static;height:auto}.sidebar nav{grid-template-columns:repeat(2,1fr)}
@@ -165,6 +173,28 @@ function render(){
 }
 function title(a,b=""){$("#pageTitle").textContent=a;$("#pageSub").textContent=b}
 
+function commandStatusFor(orderId,destination){
+  const list=commands.filter(c=>c.orderId===orderId&&c.destination===destination);
+  if(!list.length)return "Sin pedido";
+  if(list.every(c=>c.status==="Entregado"))return "Entregado";
+  if(list.every(c=>["Listo","Entregado"].includes(c.status)))return "Listo";
+  if(list.some(c=>c.status==="Preparando"))return "Preparando";
+  return "Pendiente";
+}
+
+function statusClass(status){
+  if(status==="Entregado"||status==="Listo")return "ok";
+  if(status==="Pendiente"||status==="Preparando")return "warn";
+  return "";
+}
+
+function openTableOrder(table){
+  selectedTable=String(table);
+  cart=[];
+  setView("caja");
+}
+window.openTableOrder=openTableOrder;
+
 function renderHome(){
   title("Inicio","Información compartida en tiempo real");
   const active=commands.filter(c=>c.status!=="Entregado").length;
@@ -186,23 +216,54 @@ function renderHome(){
 function renderCaja(){
   title("Caja","Crear pedidos y enviarlos a Cocina y Barra");
   const cats=["Todas",...new Set(products.map(p=>p.category||"General"))];
+  const openOrder=orders.find(o=>o.table===selectedTable&&o.status==="Abierta");
+  const cocinaStatus=openOrder?commandStatusFor(openOrder.id,"Cocina"):"Sin pedido";
+  const barraStatus=openOrder?commandStatusFor(openOrder.id,"Barra"):"Sin pedido";
+
   $("#content").innerHTML=`
   <div class="toolbar">
     <label>Mesa<select id="tableSel">${Array.from({length:12},(_,i)=>`<option ${String(i+1)===selectedTable?"selected":""}>${i+1}</option>`).join("")}</select></label>
     <label class="grow">Buscar<input id="searchProd" placeholder="Producto"></label>
     <label>Categoría<select id="catSel">${cats.map(c=>`<option>${esc(c)}</option>`).join("")}</select></label>
+    <button class="secondary" onclick="setView('mesas')">Volver a mesas</button>
   </div>
   <div class="pos">
     <section class="card"><div id="productGrid" class="products"></div></section>
     <section class="card">
       <h2>Mesa ${selectedTable}</h2>
+
+      ${openOrder?`
+        <div class="current-order">
+          <h3>Cuenta actual</h3>
+          ${(openOrder.items||[]).map(i=>`
+            <div class="row">
+              <span>${i.qty} × ${esc(i.name)}</span>
+              <strong>${money(i.price*i.qty)}</strong>
+            </div>`).join("")}
+          <div class="total"><span>Acumulado</span><span>${money(openOrder.total)}</span></div>
+          <div class="status-line"><span>👨‍🍳 Cocina</span><span class="badge ${statusClass(cocinaStatus)}">${cocinaStatus}</span></div>
+          <div class="status-line"><span>🍺 Barra</span><span class="badge ${statusClass(barraStatus)}">${barraStatus}</span></div>
+        </div>`:
+        `<div class="current-order"><span class="badge ok">Mesa libre</span><p class="muted">Agregá productos para iniciar el pedido.</p></div>`
+      }
+
+      <h3>Productos nuevos</h3>
       <div id="cart"></div>
-      <div class="total"><span>Total</span><span id="cartTotal"></span></div>
-      <div class="actions"><button class="primary" onclick="sendOrder()">Enviar pedido</button><button class="secondary" onclick="clearCart()">Vaciar</button></div>
+      <div class="total"><span>Nuevo pedido</span><span id="cartTotal"></span></div>
+      <div class="actions">
+        <button class="primary" onclick="sendOrder()">Enviar pedido</button>
+        <button class="secondary" onclick="clearCart()">Vaciar</button>
+        ${openOrder?`<button class="secondary" onclick="checkout('${openOrder.id}')">Cobrar mesa</button>`:""}
+      </div>
     </section>
   </div>`;
 
-  $("#tableSel").onchange=e=>{selectedTable=e.target.value;renderCaja()};
+  $("#tableSel").onchange=e=>{
+    selectedTable=e.target.value;
+    cart=[];
+    renderCaja();
+  };
+
   const drawProducts=()=>{
     const q=$("#searchProd").value.toLowerCase().trim(),cat=$("#catSel").value;
     const list=products.filter(p=>p.active!==false&&(cat==="Todas"||p.category===cat)&&(!q||(p.name+" "+p.category).toLowerCase().includes(q)));
@@ -212,8 +273,11 @@ function renderCaja(){
         <span class="muted">${esc(p.destination)} · stock ${p.stock||0}</span>
       </button>`).join(""):`<div class="empty">No hay productos.</div>`;
   };
-  $("#searchProd").oninput=drawProducts;$("#catSel").onchange=drawProducts;
-  drawProducts();drawCart();
+
+  $("#searchProd").oninput=drawProducts;
+  $("#catSel").onchange=drawProducts;
+  drawProducts();
+  drawCart();
 }
 function drawCart(){
   const root=$("#cart");if(!root)return;
@@ -275,23 +339,55 @@ window.sendOrder=async()=>{
       batch.set(ref,{orderId,table:selectedTable,destination,items,status:"Pendiente",createdAt:serverTimestamp(),createdBy:user.email});
     }
     await batch.commit();
-    cart=[];toast("Pedido enviado");renderCaja();
+    cart=[];toast("Pedido enviado a Cocina y Barra");renderCaja();
   }catch(e){
     console.error(e);toast("No se pudo enviar: "+(e.code||e.message));
   }
 };
 
 function renderTables(){
-  title("Mesas","Pedidos abiertos");
+  title("Mesas","Tocá una mesa para abrir o agregar un pedido");
   $("#content").innerHTML=`<div class="grid cols3">${Array.from({length:12},(_,i)=>{
-    const n=String(i+1),o=orders.find(x=>x.table===n&&x.status==="Abierta");
-    return `<section class="card"><h3>Mesa ${n}</h3>${o?`
-      <span class="badge warn">Ocupada</span><p>${(o.items||[]).reduce((a,x)=>a+x.qty,0)} productos</p>
-      <h2>${money(o.total)}</h2><button class="primary" onclick="checkout('${o.id}')">Cobrar</button>`:
-      `<span class="badge ok">Libre</span>`}</section>`;
+    const n=String(i+1);
+    const o=orders.find(x=>x.table===n&&x.status==="Abierta");
+    const cocinaStatus=o?commandStatusFor(o.id,"Cocina"):"Sin pedido";
+    const barraStatus=o?commandStatusFor(o.id,"Barra"):"Sin pedido";
+
+    return `<section
+      class="card table-card ${o?"occupied":"free"}"
+      onclick="openTableOrder('${n}')"
+      role="button"
+      tabindex="0"
+      onkeydown="if(event.key==='Enter')openTableOrder('${n}')">
+
+      <h3>Mesa ${n}</h3>
+
+      ${o?`
+        <span class="badge warn">Ocupada</span>
+        <p>${(o.items||[]).reduce((a,x)=>a+x.qty,0)} productos</p>
+        <h2>${money(o.total)}</h2>
+
+        <div class="status-line">
+          <span>👨‍🍳 Cocina</span>
+          <span class="badge ${statusClass(cocinaStatus)}">${cocinaStatus}</span>
+        </div>
+
+        <div class="status-line">
+          <span>🍺 Barra</span>
+          <span class="badge ${statusClass(barraStatus)}">${barraStatus}</span>
+        </div>
+
+        <div class="actions">
+          <button class="primary" onclick="event.stopPropagation();openTableOrder('${n}')">Agregar pedido</button>
+          <button class="secondary" onclick="event.stopPropagation();checkout('${o.id}')">Cobrar</button>
+        </div>`:
+        `<span class="badge ok">Libre</span>
+         <p class="muted">Tocá la mesa para cargar el pedido.</p>
+         <button class="primary" onclick="event.stopPropagation();openTableOrder('${n}')">Abrir mesa</button>`
+      }
+    </section>`;
   }).join("")}</div>`;
 }
-
 window.checkout=id=>{
   const o=orders.find(x=>x.id===id);if(!o)return;
   modal(`<h2>Cobrar Mesa ${esc(o.table)}</h2>
